@@ -8,18 +8,131 @@ output:
 
 ## Loading and preprocessing the data
 
+### Load data
+Assuming data are stored in `activity.zip` in file named `activity.csv`. We can
+create a connection object first and then read data easily from zip archive.
+```{r, echo=TRUE}
+con <- unz('./activity.zip', filename = 'activity.csv')
+df <- read.csv(con, stringsAsFactors = FALSE)
+```
+Let's wee what data are loaded:
+```{r, echo=TRUE}
+str(df)
+head(df)
+```
 
+### Pre-process
+It is probably a good idea to have `date` column stored as `date` type:
+```{r, echo=TRUE}
+df$date <- as.Date(df$date, format="%Y-%m-%d")
+head(df$date, n = 5)
+```
+
+Check number of rows per day:
+```{r, echo=TRUE}
+  x <- unique(aggregate(df$steps, list(Date = df$date), length)[2])
+```
+Number of rows per day is `r x`. This means that every date has the same
+number of rows. Now I will check if intervals are the same for every day.
+```{r, echo = TRUE}
+  length(unique(df$interval)) == x
+  unique(aggregate(df$interval, list(Date = df$date), function(x) length(unique(x)))[2])
+```
+With the first statement we can show that number of unique values in data
+is the same as number of rows for each date in data. Together with the second
+statement that shows number of unique values in each date it proves that for
+every date intervals are defined in the same way, consistently, no rows are
+missing.
 
 ## What is mean total number of steps taken per day?
 
+```{r, echo=TRUE}
+dfAggregated <- with(df, aggregate(steps, list(Date = date), sum))
+avgStepsPerDay <- mean(dfAggregated$x, na.rm = TRUE)
+medStepsPerDay <- median(dfAggregated$x, na.rm = TRUE) 
+```
 
+Average number of steps taken per day is `r format(round(avgStepsPerDay, 0), digits = 8, big.mark = ',')`. Median number of steps per day is `r format(round(medStepsPerDay, 0), digits = 8, big.mark = ',')`.
+
+```{r, echo = TRUE}
+hist(dfAggregated$x, main = 'Histogram of number of steps pe day',
+     xlab = 'Steps')
+```
 
 ## What is the average daily activity pattern?
+Daily activity pattern at 5-minutes resolution:
+```{r, echo = TRUE}
+aggData <-aggregate(df$steps, list(Interval = df$interval), 
+                    FUN = function(x) mean(x, na.rm = TRUE))
+plot(aggData, type = 'l', ylab = 'Steps', xlab = 'Interval',
+     main = 'Average number of steps per 5-minute interval')
+```
 
+Which interval contains the highest average number of steps?
+```{r echo = TRUE}
+aggData[order(aggData$x, decreasing = TRUE), ][1, ]
+```
 
 
 ## Imputing missing values
+Number of rows with `NA` for steps:
 
+```{r, echo=TRUE}
+sum(is.na(df$steps))
+```
 
+Days with `NA` values:
+```{r, echo = TRUE}
+  missingDays <- unique(df[is.na(df$steps), 'date'])
+  missingDays
+```
+
+See if there are complete days missing or `NA` values can occur together with
+non `NA` values for single day:
+```{r, echo = TRUE}
+unique(aggregate(df$steps, list(Date = df$date), 
+  FUN = function(x) sum(is.na(x)))[2])
+```
+This means, that if there is `NA` value for any row, than `NA` is for every interval in 
+that date. Now we can input missing values. I will use interval mean value for all 
+dates as replacement.
+```{r echo = TRUE}
+  meanData <- aggregate(df$steps, list(interval = df$interval), 
+                        FUN = function(x) mean(x, na.rm = TRUE))
+  replacementData <- merge(meanData, data.frame(missingDays), by = NULL)
+  names(replacementData) <- c('interval', 'steps', 'date')
+  oldRows <- nrow(df)
+  dfNew <- df[!is.na(df$steps), ]
+  dfNew <- rbind(dfNew, replacementData[, c(2, 3, 1)])
+  print(paste('Same number of rows?', oldRows == nrow(dfNew)))
+  print(paste('Number of NAs in step?', sum(is.na(dfNew$steps))))
+```
+
+Compare median and mean between original data and data with imputted values:
+```{r echo=TRUE}
+  dfAggregated <- with(df, aggregate(steps, list(Date = date), sum))
+  avgStepsPerDayNew <- mean(dfAggregated$x, na.rm = TRUE)
+  medStepsPerDayNew <- median(dfAggregated$x, na.rm = TRUE)   
+  avgStepsPerDay - avgStepsPerDayNew
+  medStepsPerDay - medStepsPerDayNew
+```
+Because of method how missing data were replaced, mean and median did not change.
+```{r echo = TRUE}
+hist(dfAggregated$x, main = 'Histogram of number of steps pe day',
+     xlab = 'Steps')
+```
 
 ## Are there differences in activity patterns between weekdays and weekends?
+Add factor to flag weekend/weekday. I will not use `weekdays` function as it
+returns names in my non-English locale and use `POSIXlt` component instead.
+```{r echo = TRUE, warning=FALSE}
+  dfNew$dayType <- factor(ifelse(as.POSIXlt(dfNew$date)$wday %in% c(0, 6), 
+                                 'Weekend', 'Weekday'))
+  aggregatedData <- aggregate(dfNew$steps, list(Interval = dfNew$interval, Day = dfNew$dayType), 
+                                FUN = mean)
+  library(ggplot2)
+  ggplot(aggregatedData, aes(x = Interval, y = x)) + geom_line() + ylab('Steps') + 
+    geom_smooth() + ylim(c(0, 200)) +
+    facet_wrap(~ Day, ncol = 1)
+
+````
